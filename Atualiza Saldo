@@ -1,0 +1,92 @@
+CREATE OR REPLACE PROCEDURE "AD_STP_UPD_TCBLALSAL" (
+       P_CODUSU NUMBER,        -- Código do usuário logado
+       P_IDSESSAO VARCHAR2,    -- Identificador da execução. Serve para buscar informações dos parâmetros/campos da execução.
+       P_QTDLINHAS NUMBER,     -- Informa a quantidade de registros selecionados no momento da execução.
+       P_MENSAGEM OUT VARCHAR2 -- Caso seja passada uma mensagem aqui, ela será exibida como uma informação ao usuário.
+) 
+/*********************************************************
+ * CRIADOR: Sávio de Oliveira Teodoro                     *
+ * DATA: 17/03/2024                                       *
+ * OBJETIVO: ATUALIZA O SALDO DO CONTROLE PARTE B         *
+ *********************************************************/
+AS
+       PARAM_REFERENCIA DATE;
+       PARAM_SALDO FLOAT;
+       PARAM_NATINI VARCHAR2(4000);
+       FIELD_CONTAPARTEB VARCHAR2(4000);
+       FIELD_REFERENCIA DATE;
+       V_COUNT NUMBER;
+       V_SALDOINI NUMBER;
+       V_SALDOSOMAB NUMBER;
+       V_SALDOSOMAA NUMBER;
+       V_NATINI VARCHAR2(1);
+       V_CODEMP NUMBER;
+       V_CODIGO VARCHAR2(100);
+       V_CODCTACTB NUMBER;
+
+BEGIN
+
+    SELECT COUNT(1) 
+        INTO V_COUNT 
+    FROM AD_TCBLALSAL 
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+        AND REFERENCIA = PARAM_REFERENCIA;
+
+    SELECT NVL(SUM(NVL(SALDOFIN, 0)), 0) 
+        INTO V_SALDOINI 
+    FROM AD_TCBLALSAL 
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+        AND REFERENCIA = ADD_MONTHS(PARAM_REFERENCIA, -1);
+
+    IF V_SALDOINI = 0 THEN 
+        SELECT NVL(SUM(NVL(SALDOINI, 0)), 0) 
+            INTO V_SALDOINI 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+    END IF;
+
+    SELECT (SUM(SAL.CREDMES) - SUM(SAL.DEBMES))
+        INTO V_SALDOSOMAB
+    FROM TCBSAL SAL
+    INNER JOIN TCBPLA P ON P.CODCTACTB = SAL.CODCTACTB
+    WHERE SAL.REFERENCIA = PARAM_REFERENCIA
+        AND SAL.CODEMP = V_CODEMP
+        AND P.CODLALURB = V_CODIGO
+        AND P.CODCTACTB = V_CODCTACTB;
+
+    SELECT NVL(SUM(CASE WHEN DC = 'D' THEN VALOR ELSE VALOR * -1 END), 0) AS VALOR 
+        INTO V_SALDOSOMAA
+    FROM AD_TCBLALSAL SAL
+    LEFT JOIN AD_TCBSALLAN LAN ON SAL.CONTAPARTEB = LAN.CONTAPARTEB
+        AND SAL.REFERENCIA = LAN.REFERENCIA
+    WHERE SAL.REFERENCIA = PARAM_REFERENCIA
+        AND SAL.CONTAPARTEB = FIELD_CONTAPARTEB
+        AND LAN.TIPOIMPOSTO = 'I'
+        AND LAN.ORIGEM = 'A';
+
+    IF V_NATINI = 'D' THEN 
+        IF V_COUNT >= 1 THEN
+            UPDATE AD_TCBLALSAL 
+            SET SALDOINI = NVL(V_SALDOINI, 0), 
+                SALDOFIN = NVL(V_SALDOINI, 0) + NVL(V_SALDOSOMAB, 0) + NVL(V_SALDOSOMAA, 0),
+                NATINI = PARAM_NATINI
+            WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+                AND REFERENCIA = PARAM_REFERENCIA;
+        END IF;
+    END IF;
+
+    IF V_NATINI = 'C' THEN 
+        IF V_COUNT >= 1 THEN
+            UPDATE AD_TCBLALSAL 
+            SET SALDOINI = NVL(V_SALDOINI, 0), 
+                SALDOFIN = NVL(V_SALDOINI, 0) - NVL(V_SALDOSOMAB, 0) - NVL(V_SALDOSOMAA, 0),
+                NATINI = PARAM_NATINI
+            WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+                AND REFERENCIA = PARAM_REFERENCIA;
+        END IF;
+    END IF;
+
+END;
+
+/
