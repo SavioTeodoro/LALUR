@@ -1,0 +1,352 @@
+CREATE OR REPLACE PROCEDURE "AD_STP_UPD_TCBLAL" (
+       P_CODUSU NUMBER,        -- Código do usuário logado
+       P_IDSESSAO VARCHAR2,    -- Identificador da execução. Serve para buscar informações dos parâmetros/campos da execução.
+       P_QTDLINHAS NUMBER,     -- Informa a quantidade de registros selecionados no momento da execução.
+       P_MENSAGEM OUT VARCHAR2 -- Caso seja passada uma mensagem aqui, ela será exibida como uma informação ao usuário.
+) 
+
+ /*********************************************************
+ * CRIADOR: Sávio de Oliveira Teodoro                     *
+ * DATA: 23/02/2024                                       *
+ * OBJETIVO: EXECUTA O LANÇAMENTO DA PARTE A DO LALUR     *
+ *                                                        *
+ *********************************************************/
+
+AS
+       PARAM_REFERENCIA DATE;
+       FIELD_CONTAPARTEB VARCHAR2(4000);
+       V_NUMLANC NUMBER;
+       V_NUMLANC2 NUMBER;       
+       V_CODCTACTB NUMBER;
+       V_CODEMP NUMBER;
+       V_DATAINI DATE;
+       V_DATALIM DATE;
+       V_TIPTRIB VARCHAR2(1);
+       V_COUNT NUMBER;
+       V_ADICOES NUMBER;
+       V_EXCLUSOES NUMBER;
+       V_CHECAGEM NUMBER;
+       V_CHECAGEM2 NUMBER;
+       V_SALDOINI NUMBER;
+       V_SALDOINI2 NUMBER;
+       V_HISTORICO VARCHAR2(400);
+       V_SALDOTEMP NUMBER;
+       V_NATINI VARCHAR2(1);
+       V_DC VARCHAR2(1);
+	   V_SALDOSOMAB NUMBER;
+	   V_SALDOSOMAA NUMBER;
+       V_CODCTACTB2 NUMBER; 
+
+       V_OPCAO VARCHAR2(1);
+       V_TITULO VARCHAR2(50);
+       V_MENSAGEM VARCHAR2(300);
+
+BEGIN
+       PARAM_REFERENCIA := ACT_DTA_PARAM(P_IDSESSAO, 'REFERENCIA');
+       FOR I IN 1..P_QTDLINHAS -- Este loop permite obter o valor de campos dos registros envolvidos na execução.
+       LOOP                    -- A variável "I" representa o registro corrente.
+           FIELD_CONTAPARTEB := ACT_TXT_FIELD(P_IDSESSAO, I, 'CONTAPARTEB');
+
+
+        SELECT DC INTO V_DC
+              FROM AD_TCBLAL
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+        SELECT COUNT(1) 
+            INTO V_COUNT 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+
+        IF V_COUNT = 0 THEN 
+            INSERT INTO AD_TCBLALSAL (CONTAPARTEB, REFERENCIA, SALDOINI, SALDOFIN, NATINI)
+            VALUES  (FIELD_CONTAPARTEB, PARAM_REFERENCIA, V_SALDOINI, ABS(V_SALDOINI) -ABS(V_EXCLUSOES) +ABS(V_ADICOES), V_DC);
+        END IF;
+
+        SELECT NATINI 
+            INTO V_NATINI 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+
+--------------------------------------------------------------------------------
+
+       SELECT NVL(MAX(NUMLANC),0) INTO V_NUMLANC
+       FROM AD_TCBSALLAN 
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+        SELECT DESCRICAO || ' - ' || TO_CHAR(TO_DATE(PARAM_REFERENCIA, 'DD/MM/YYYY'), 'Month')
+        INTO V_HISTORICO
+        FROM AD_TCBLAL
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+       SELECT COUNT(1) INTO V_CHECAGEM
+       FROM AD_TCBSALLAN 
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+       AND NUMLANC > 0
+       AND ORIGEM = 'A'
+       AND REFERENCIA = PARAM_REFERENCIA;
+
+       SELECT  CODEMP, DATAINI,
+              DATALIM, TIPTRIB, CODCTACTB2
+       INTO  V_CODEMP, V_DATAINI,
+              V_DATALIM, V_TIPTRIB, V_CODCTACTB2
+       FROM AD_TCBLAL
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+
+       IF V_CHECAGEM > 0 OR V_CHECAGEM2 > 0 THEN 
+            V_TITULO := 'Sobrepor Lançamentos';
+            V_MENSAGEM := 'Já existem lançamentos da parte A, ao confirmar o sistema irá sobrepor os lançamentos já existentes, deseja continuar?';
+            V_OPCAO := ACT_ESCOLHER_SIMNAO(V_TITULO, V_MENSAGEM, P_IDSESSAO, 1);
+
+            IF V_OPCAO = 'N' THEN 
+                RAISE_APPLICATION_ERROR(-20001, 'Operação Cancelada Pelo Usuário');
+            END IF;
+            IF V_OPCAO = 'S' THEN 
+                DELETE FROM AD_TCBSALLAN WHERE ORIGEM = 'A' AND REFERENCIA = PARAM_REFERENCIA AND CONTAPARTEB = FIELD_CONTAPARTEB; 
+            END IF;
+       END IF;
+
+       INSERT INTO AD_TCBSALLAN
+       (NUMLANC,
+       CONTAPARTEB,
+       REFERENCIA,
+       CODCTACTB,
+       VALOR, 
+       DC,
+       REFLEXO,
+       TIPOIMPOSTO,
+       HISTORICO,
+       LINHALALUR,
+       ORIGEM) 
+
+      SELECT V_NUMLANC + ROW_NUMBER() OVER (ORDER BY V_NUMLANC) AS V_NUMLANC,
+              FIELD_CONTAPARTEB,
+              PARAM_REFERENCIA,
+              L.CODCTACTB,
+              ABS(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) AS VLRLANC,
+              CASE WHEN (SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) >= 0 THEN 'D' ELSE 'R' END AS TIPLANC,
+              'N' AS REFLEXO,
+              'I' AS TIPOIMPOSTO,
+              V_HISTORICO,
+              P.LALUR_A,
+              'A' AS PARTE
+       FROM VW_TCBLAN_ENC_RESUL L
+       INNER JOIN TCBPLA P
+       ON (P.CODCTACTB = L.CODCTACTB)
+       WHERE NVL(P.ADICOESIRPJ, 'N') = 'S'
+       AND L.REFERENCIA =PARAM_REFERENCIA
+       AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+       GROUP BY L.CODEMP,
+       L.CODCTACTB,
+       P.LALUR_A;
+
+       INSERT INTO AD_TCBSALLAN
+       (NUMLANC,
+       CONTAPARTEB,
+       REFERENCIA,
+       CODCTACTB,
+       VALOR, 
+       DC,
+       REFLEXO,
+       TIPOIMPOSTO,
+       HISTORICO,
+       LINHALALUR,
+       ORIGEM) 
+
+       SELECT V_NUMLANC + 1 + ROW_NUMBER() OVER (ORDER BY V_NUMLANC) AS V_NUMLANC,
+              FIELD_CONTAPARTEB,
+              PARAM_REFERENCIA,
+              L.CODCTACTB,
+              ABS(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) AS VLRLANC,
+              CASE WHEN (SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) >= 0 THEN 'D' ELSE 'R' END AS TIPLANC,
+              'N' AS REFLEXO,
+              'C' AS TIPOIMPOSTO,
+              V_HISTORICO,
+              P.LALUR_A,
+              'A'AS PARTE
+       FROM VW_TCBLAN_ENC_RESUL L
+       INNER JOIN TCBPLA P
+       ON (P.CODCTACTB = L.CODCTACTB)
+       WHERE NVL(P.ADICOESCSLL, 'N') = 'S'
+       AND L.REFERENCIA =PARAM_REFERENCIA
+       AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+       GROUP BY L.CODEMP,
+       L.CODCTACTB,
+       P.LALUR_A;
+
+--------------------------------------------------------------------------------
+       SELECT NVL(MAX(NUMLANC),0) INTO V_NUMLANC2
+       FROM AD_TCBSALLAN 
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+        INSERT INTO AD_TCBSALLAN
+       (NUMLANC,
+       CONTAPARTEB,
+       REFERENCIA,
+       CODCTACTB,
+       VALOR, 
+       DC,
+       REFLEXO,
+       TIPOIMPOSTO,
+       HISTORICO,
+       LINHALALUR,
+       ORIGEM) 
+
+       SELECT V_NUMLANC2 + ROW_NUMBER() OVER (ORDER BY V_NUMLANC2) AS V_NUMLANC ,
+              FIELD_CONTAPARTEB,
+              PARAM_REFERENCIA,
+              L.CODCTACTB,
+              ABS(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) AS VLRLANC,
+              CASE WHEN (SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) >= 0 THEN 'D' ELSE 'R' END AS TIPLANC,
+              'N' AS REFLEXO,
+              'I' AS TIPOIMPOSTO,
+              V_HISTORICO,
+              P.LALUR_A,
+              'A' AS PARTE 
+       FROM VW_TCBLAN_ENC_RESUL L
+       INNER JOIN TCBPLA P
+       ON (P.CODCTACTB = L.CODCTACTB)
+       WHERE NVL(P.EXCLUSOESIRPJ, 'N') = 'S'
+       AND L.REFERENCIA = PARAM_REFERENCIA
+       AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+       GROUP BY L.CODEMP,
+       L.CODCTACTB,
+       P.LALUR_A;
+
+    SELECT NVL(MAX(NUMLANC),0) INTO V_NUMLANC2
+       FROM AD_TCBSALLAN 
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+        INSERT INTO AD_TCBSALLAN
+       (NUMLANC,
+       CONTAPARTEB,
+       REFERENCIA,
+       CODCTACTB,
+       VALOR, 
+       DC,
+       REFLEXO,
+       TIPOIMPOSTO,
+       HISTORICO,
+       LINHALALUR,
+       ORIGEM) 
+
+       SELECT V_NUMLANC2+ 1+ ROW_NUMBER() OVER (ORDER BY V_NUMLANC2) AS V_NUMLANC ,
+              FIELD_CONTAPARTEB,
+              PARAM_REFERENCIA,
+              L.CODCTACTB,
+              ABS(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) AS VLRLANC,
+              CASE WHEN (SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)) >= 0 THEN 'D' ELSE 'R' END AS TIPLANC,
+              'N' AS REFLEXO,
+              'C' AS TIPOIMPOSTO,
+              V_HISTORICO,
+              P.LALUR_A,
+              'A' AS PARTE
+       FROM VW_TCBLAN_ENC_RESUL L
+       INNER JOIN TCBPLA P ON (P.CODCTACTB = L.CODCTACTB)
+       WHERE NVL(P.EXCLUSOESCSLL, 'N') = 'S'
+        AND L.REFERENCIA =PARAM_REFERENCIA
+        AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+       GROUP BY L.CODEMP,
+       L.CODCTACTB,
+       P.LALUR_A;
+
+--------------------------------------------------------------------------------
+
+       SELECT COUNT(1) 
+            INTO V_COUNT 
+       FROM AD_TCBLALSAL 
+       WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+        AND REFERENCIA = PARAM_REFERENCIA;
+
+       SELECT NVL(SUM(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)), 0) 
+            INTO V_ADICOES
+       FROM VW_TCBLAN_ENC_RESUL L
+            INNER JOIN TCBPLA P ON (P.CODCTACTB = L.CODCTACTB)
+       WHERE NVL(P.ADICOESCSLL, 'N') = 'S'
+        AND L.REFERENCIA =PARAM_REFERENCIA
+        AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+       GROUP BY L.CODEMP,
+       L.CODCTACTB,
+       L.TIPLANC;
+
+        SELECT NVL(SUM(NVL(SALDOFIN, 0)), 0) 
+            INTO V_SALDOINI 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = ADD_MONTHS(PARAM_REFERENCIA,-1);
+
+		IF V_SALDOINI = 0 THEN 
+        SELECT NVL(SUM(NVL(SALDOINI, 0)), 0) 
+            INTO V_SALDOINI 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+        END IF;
+
+        SELECT NVL(SUM(NVL(SALDOINI, 0)), 0) 
+            INTO V_SALDOINI2 
+        FROM AD_TCBLALSAL 
+        WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+
+        SELECT NVL(SUM(SUM(CASE WHEN L.TIPLANC = 'D' THEN L.VLRLANC ELSE L.VLRLANC * -1 END)), 0) 
+            INTO V_EXCLUSOES
+        FROM VW_TCBLAN_ENC_RESUL L
+            INNER JOIN TCBPLA P  ON (P.CODCTACTB = L.CODCTACTB)
+        WHERE NVL(P.EXCLUSOESCSLL, 'N') = 'S'
+            AND L.REFERENCIA =PARAM_REFERENCIA
+            AND L.CODEMP = V_CODEMP
+       AND L.CODCTACTB = V_CODCTACTB2
+        GROUP BY L.CODEMP,
+            L.CODCTACTB ,
+            L.TIPLANC;
+
+
+        SELECT NVL(SUM(CASE WHEN DC = 'D' THEN VALOR ELSE VALOR*-1 END),0) AS VALOR 
+            INTO V_SALDOSOMAB
+        FROM AD_TCBLALSAL SAL
+        LEFT JOIN AD_TCBSALLAN LAN ON SAL.CONTAPARTEB = LAN.CONTAPARTEB
+            AND SAL.REFERENCIA = LAN.REFERENCIA
+        WHERE SAL.REFERENCIA = PARAM_REFERENCIA
+            AND SAL.CONTAPARTEB = FIELD_CONTAPARTEB
+            AND LAN.TIPOIMPOSTO = 'I'
+            AND LAN.ORIGEM = 'B';
+
+        IF V_NATINI = 'D' THEN 
+          IF V_COUNT >= 1 THEN
+            UPDATE AD_TCBLALSAL 
+				SET SALDOINI = V_SALDOINI, 
+				SALDOFIN = V_SALDOINI + V_SALDOSOMAB - ABS(V_EXCLUSOES) + V_ADICOES
+            WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+          END IF;
+        END IF; 
+
+        IF V_NATINI = 'C' THEN 
+          IF V_COUNT >= 1 THEN
+            UPDATE AD_TCBLALSAL 
+				SET SALDOINI = V_SALDOINI,
+				SALDOFIN = V_SALDOINI - V_SALDOSOMAB + ABS(V_EXCLUSOES) - V_ADICOES
+            WHERE CONTAPARTEB = FIELD_CONTAPARTEB 
+            AND REFERENCIA = PARAM_REFERENCIA;
+          END IF;
+        END IF; 
+
+    END LOOP;
+     P_MENSAGEM := 'Lançamentos Executados com Sucesso!';
+END;
+
+
+
+
+
+
+
+/
