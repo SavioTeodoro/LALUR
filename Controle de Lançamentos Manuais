@@ -1,0 +1,48 @@
+CREATE OR REPLACE TRIGGER AD_TRG_TCBLAL_MANUAL 
+BEFORE INSERT ON AD_TCBSALLAN 
+FOR EACH ROW
+/*********************************************************
+ * CRIADOR: Sávio de Oliveira Teodoro                     *
+ * DATA: 26/03/2024                                       *
+ * OBJETIVO: ALTERAR QUANDO  O LANÇAMENTO FOR MANUAL      *
+ *                                                        *
+ *********************************************************/
+
+DECLARE 
+
+V_NUMLANC NUMBER; 
+V_CONTAPARTEB VARCHAR2(50);
+V_REFERENCIA DATE; 
+V_CODCTACTB NUMBER;
+
+BEGIN 
+
+
+IF  :NEW.MANUAL = 'S' THEN
+V_NUMLANC := :NEW.NUMLANC;
+
+V_CONTAPARTEB := :NEW.CONTAPARTEB;
+V_REFERENCIA := :NEW.REFERENCIA;
+
+SELECT CODCTACTB INTO V_CODCTACTB FROM AD_TCBLAL
+WHERE CONTAPARTEB = V_CONTAPARTEB;
+
+SELECT NVL(MAX(NVL(NUMLANC,0)),0)+1 INTO V_NUMLANC FROM AD_TCBSALLAN
+WHERE CONTAPARTEB = V_CONTAPARTEB 
+AND REFERENCIA = V_REFERENCIA;
+
+--verifica se é manual 
+
+
+:NEW.CODCTACTB := V_CODCTACTB;
+:NEW.NUMLANC := V_NUMLANC;
+:NEW.ORIGEM := 'B';
+:NEW.REFLEXO := 'S';
+
+
+
+END IF;
+
+END;
+
+/
