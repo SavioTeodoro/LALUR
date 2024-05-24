@@ -1,0 +1,402 @@
+CREATE OR REPLACE PROCEDURE "AD_STP_UPD_TCBLALB2" (
+       P_CODUSU NUMBER,        -- Código do usuário logado
+       P_IDSESSAO VARCHAR2,    -- Identificador da execução. Serve para buscar informações dos parâmetros/campos da execução.
+       P_QTDLINHAS NUMBER,     -- Informa a quantidade de registros selecionados no momento da execução.
+       P_MENSAGEM OUT VARCHAR2 -- Caso seja passada uma mensagem aqui, ela será exibida como uma informação ao usuário.
+)
+
+ /*********************************************************
+ * CRIADOR: Sávio de Oliveira Teodoro                     *
+ * DATA: 23/02/2024                                       *
+ * OBJETIVO: EXECUTA O LANÇAMENTO DA PARTE B DO LALUR     *
+ * NA TELA NATIVA DA PARTE A                              *
+ *********************************************************/
+
+ AS
+       PARAM_REFERENCIA DATE;
+       FIELD_CONTAPARTEB VARCHAR2(4000);
+       V_CODCTACTB NUMBER;
+       V_CODCTACTB2 NUMBER;
+       V_CODCTACTB3 NUMBER;
+       V_VALOR NUMBER;
+       V_VALOR2 NUMBER;
+       V_VALORMANUAL NUMBER;
+       V_VALORTOT NUMBER;              
+       V_CTACTB VARCHAR2(50);
+       V_CODEMP NUMBER;
+       V_NATINI VARCHAR2(1);
+       V_DC VARCHAR2(1);
+       V_TIPOIMPOSTO VARCHAR2(1);
+       V_REFERENCIA DATE;
+       V_TIPLANC VARCHAR2(1);
+       V_TIPLANC2 VARCHAR2(1);
+       V_TIPLANCMANUAL VARCHAR2(1);       
+       V_COUNT NUMBER;
+       V_COUNT2 NUMBER;       
+       V_CHECK VARCHAR2(1) := 'N'; -- Inicializando V_CHECK como 'N'
+       V_CHECAGEM NUMBER;
+       V_CHECAGEMMANUAL NUMBER;
+       V_TESTE NUMBER;
+       V_VALOR3 NUMBER;
+       V_VALORAPURA NUMBER;
+       V_TIPLANC3 VARCHAR2(1);
+
+
+       V_TIPLANCVAR VARCHAR2(1);
+       V_TIPLANCVAR2 VARCHAR2(1);
+
+       V_VALORVAR NUMBER;
+       V_VALORVAR2 NUMBER; 
+
+       V_OPCAO VARCHAR2(1);
+       V_TITULO VARCHAR2(50);
+       V_MENSAGEM VARCHAR2(300);
+BEGIN
+    PARAM_REFERENCIA := ACT_DTA_PARAM(P_IDSESSAO, 'REFERENCIA');
+
+    FOR I IN 1..P_QTDLINHAS -- Este loop permite obter o valor de campos dos registros envolvidos na execução.
+    LOOP       
+    FIELD_CONTAPARTEB := ACT_TXT_FIELD(P_IDSESSAO, I, 'CONTAPARTEB');
+
+    SELECT COUNT(1) INTO V_CHECAGEM
+    FROM AD_TCBSALLAN 
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+        AND REFERENCIA = PARAM_REFERENCIA
+        AND TIPOIMPOSTO = 'I'
+        AND ORIGEM IN ('B')
+        AND REFLEXO = 'S';
+
+    IF V_CHECAGEM >=1 THEN
+
+    SELECT LAL.CODEMP, NVL(LAL.CODCTACTB,0), NVL(PLA.CTACTB,0), LAL.DC, CODCTACTB2, CODCTACTB3
+    INTO V_CODEMP, V_CODCTACTB, V_CTACTB, V_DC, V_CODCTACTB2, V_CODCTACTB3
+    FROM AD_TCBLAL LAL 
+    LEFT JOIN TCBPLA PLA ON PLA.CODCTACTB = LAL.CODCTACTB
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+    SELECT REFERENCIA
+    INTO V_REFERENCIA 
+    FROM AD_TCBLALSAL
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+       AND REFERENCIA = PARAM_REFERENCIA;
+
+    SELECT 
+    CASE WHEN MAX(LAN.DC) = 'D' THEN 'D' ELSE 'C' END AS V_TIPLANC,
+    CASE WHEN MAX(SAL.NATINI) = 'D' THEN 'D' ELSE 'C' END AS V_TIPLANC2
+    INTO V_TIPLANCVAR, V_TIPLANCVAR2
+    FROM AD_TCBLALSAL SAL 
+    INNER JOIN AD_TCBSALLAN  LAN ON SAL.CONTAPARTEB = LAN.CONTAPARTEB
+        AND SAL.REFERENCIA = LAN.REFERENCIA
+    WHERE SAL.CONTAPARTEB = FIELD_CONTAPARTEB
+        AND SAL.REFERENCIA = PARAM_REFERENCIA
+        AND LAN.TIPOIMPOSTO = 'I';
+
+    SELECT ABS(SUM(CASE WHEN LAN.DC = 'R' THEN LAN.VALOR ELSE LAN.VALOR * -1 END)) INTO V_VALOR
+    FROM AD_TCBSALLAN LAN 
+    WHERE LAN.CONTAPARTEB = FIELD_CONTAPARTEB
+        AND LAN.REFERENCIA  BETWEEN TO_CHAR(TO_DATE('01/01/' || TO_CHAR(TO_DATE(PARAM_REFERENCIA, 'DD/MM/YYYY'), 'YYYY'), 'DD/MM/YYYY')) 
+        AND PARAM_REFERENCIA 
+        AND LAN.TIPOIMPOSTO = 'I';
+
+    SELECT ABS(NVL(SUM(CASE WHEN DC = 'R' THEN VALOR ELSE VALOR * -1 END),0)),
+        CASE WHEN SUM(CASE WHEN DC = 'D' THEN VALOR ELSE VALOR * -1 END) < 0 THEN 'C' ELSE 'D' END AS V_TIPLANC 
+    INTO V_TESTE, V_TIPLANC 
+    FROM AD_TCBSALLAN  
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+        AND REFERENCIA BETWEEN TO_CHAR(TO_DATE('01/01/' || TO_CHAR(TO_DATE(PARAM_REFERENCIA, 'DD/MM/YYYY'), 'YYYY'), 'DD/MM/YYYY')) 
+        AND PARAM_REFERENCIA 
+        AND TIPOIMPOSTO = 'I'
+        AND ORIGEM IN ('B', 'M', 'A');
+
+    ----- CASO O TIPO LANÇAMENTO DISTOE DE UM MÊS PARA O OUTRO
+
+        /*IF V_TIPLANCVAR <> V_TIPLANCVAR2 THEN 
+
+    SELECT NVL(SUM(VALORAC),0) INTO V_VALORVAR
+    FROM AD_TCBSALLAN  
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+        AND REFERENCIA = ADD_MONTHS(PARAM_REFERENCIA,-1)
+        AND TIPOIMPOSTO = 'I'
+        AND ORIGEM IN ('B', 'M');
+
+    SELECT ABS(NVL(SUM(CASE WHEN DC = 'R' THEN VALORAC ELSE VALORAC * -1 END),0)) INTO V_VALORVAR2
+    FROM AD_TCBSALLAN  
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB
+        AND REFERENCIA = PARAM_REFERENCIA
+        AND TIPOIMPOSTO = 'I'
+        AND ORIGEM IN ('B', 'M');
+
+        IF (V_VALORVAR - V_VALORVAR2) > 0 THEN 
+        V_TIPLANC := V_TIPLANCVAR2;
+        ELSE 
+        V_TIPLANC := V_TIPLANCVAR;
+        END IF;
+    END IF;*/
+
+    SELECT COUNT(1) INTO V_COUNT
+    FROM TCBIRPJAD 
+    WHERE CODCTACTB = V_CODCTACTB 
+        AND REFERENCIA = PARAM_REFERENCIA
+        AND CODEMP = V_CODEMP;
+
+    SELECT COUNT(1) INTO V_COUNT2
+    FROM TCBIRPJEX 
+    WHERE CODCTACTB = V_CODCTACTB 
+        AND REFERENCIA = PARAM_REFERENCIA
+        AND CODEMP = V_CODEMP;
+
+    SELECT  NVL(SUM(VLRLANC),0), 
+       CASE WHEN NVL(SUM(VLRLANC),0) > 0 THEN 'D' ELSE 'C' END AS TIPLANC,
+       'S' AS CHECAGEM
+     INTO V_VALOR2,
+       V_TIPLANC2,
+       V_CHECK
+     FROM TCBIRPJAD 
+     WHERE CODCTACTB = V_CODCTACTB2
+       AND REFERENCIA = PARAM_REFERENCIA
+       AND TIPOIMPOSTO = 'I'
+        AND CODEMP = V_CODEMP       ;
+
+     SELECT NVL(SUM(VLRLANC),V_VALOR2), 
+       CASE WHEN NVL(SUM(VLRLANC),0) > 0 THEN 'C' ELSE 'D' END AS TIPLANC,
+       'S' AS CHECAGEM
+     INTO V_VALOR2,
+       V_TIPLANC2,
+       V_CHECK
+     FROM TCBIRPJEX
+     WHERE CODCTACTB = V_CODCTACTB2
+       AND REFERENCIA = PARAM_REFERENCIA
+       AND TIPOIMPOSTO = 'I'
+        AND CODEMP = V_CODEMP;
+
+----------------------
+
+    SELECT  NVL(SUM(VLRLANC),0), 
+       CASE WHEN NVL(SUM(VLRLANC),0) > 0 THEN 'D' ELSE 'C' END AS TIPLANC,
+       'S' AS CHECAGEM
+     INTO V_VALOR3,
+       V_TIPLANC3,
+       V_CHECK
+     FROM TCBIRPJAD 
+     WHERE CODCTACTB = V_CODCTACTB3
+       AND REFERENCIA = PARAM_REFERENCIA
+       AND TIPOIMPOSTO = 'I'
+        AND CODEMP = V_CODEMP;
+
+     SELECT NVL(SUM(VLRLANC),V_VALOR3), 
+       CASE WHEN NVL(SUM(VLRLANC),0) > 0 THEN 'C' ELSE 'D' END AS TIPLANC,
+       'S' AS CHECAGEM
+     INTO V_VALOR3,
+       V_TIPLANC3,
+       V_CHECK
+     FROM TCBIRPJEX
+     WHERE CODCTACTB = V_CODCTACTB3
+       AND REFERENCIA = PARAM_REFERENCIA
+       AND TIPOIMPOSTO = 'I'
+        AND CODEMP = V_CODEMP;
+
+    V_VALORAPURA := V_VALOR2 - V_VALOR3;
+
+    IF V_COUNT >= 1 OR V_COUNT2 >= 1 THEN
+        DELETE FROM TCBIRPJAD 
+        WHERE CODCTACTB = V_CODCTACTB 
+            AND REFERENCIA = PARAM_REFERENCIA
+            AND CODEMP = V_CODEMP;
+        DELETE FROM  TCBIRPJEX 
+        WHERE CODCTACTB = V_CODCTACTB 
+            AND REFERENCIA = PARAM_REFERENCIA
+            AND CODEMP = V_CODEMP;
+
+    END IF;
+
+
+    IF V_TIPLANC2 = 'D' AND V_TIPLANC = 'D' THEN
+       V_VALORTOT := V_VALOR - V_VALORAPURA;
+    END IF;
+
+    IF V_TIPLANC = 'D' AND V_TIPLANC2 = 'C' THEN
+       V_VALORTOT := V_VALOR - (V_VALORAPURA*-1);
+    END IF;    
+
+    IF V_TIPLANC = 'C' AND V_TIPLANC2 = 'D' THEN
+       V_VALORTOT := (V_VALOR*-1) - V_VALORAPURA;
+    END IF;    
+
+    IF V_TIPLANC = 'C' AND V_TIPLANC2 = 'C' THEN
+       V_VALORTOT := (V_VALOR*-1) - (V_VALORAPURA*-1);
+    END IF;    
+
+
+
+    IF V_CHECK = 'S' THEN
+       IF V_VALORTOT > 0 THEN
+
+        INSERT INTO TCBIRPJAD (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'I',
+            'S',
+            'N');
+
+        INSERT INTO TCBIRPJAD (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'C',
+            'S',
+            'N');
+       END IF;
+
+       IF V_VALORTOT < 0 THEN
+
+        INSERT INTO TCBIRPJEX (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'I',
+            'S',
+            'N');
+
+        INSERT INTO TCBIRPJEX (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'C',
+            'S',
+            'N');
+       END IF;
+    END IF;
+
+
+    IF V_CHECK <> 'S' OR V_CHECK IS NULL THEN
+       IF V_DC = V_TIPLANC THEN
+
+        INSERT INTO TCBIRPJAD (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'I',
+            'S',
+            'N');
+
+        INSERT INTO TCBIRPJAD (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'C',
+            'S',
+            'N');
+       END IF;
+
+       IF V_DC <> V_TIPLANC THEN
+
+        INSERT INTO TCBIRPJEX (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'I',
+            'S',
+            'N');
+
+        INSERT INTO TCBIRPJEX (
+            CODEMP,
+            REFERENCIA,
+            CODCTACTB,
+            VLRLANC,
+            TIPOIMPOSTO,
+            AD_PARTEB,
+            DIGITADO)
+        VALUES (
+            V_CODEMP,
+            V_REFERENCIA,
+            V_CODCTACTB,
+            ABS(ABS(NVL(V_VALORTOT,0))),
+            'C',
+            'S',
+            'N');
+       END IF;
+    END IF;
+
+    END IF;
+    END LOOP;
+
+P_MENSAGEM := 'Lançamentos Executados com Sucesso!';
+END;
+
+
+
+
+
+
+
+
+
+
+
+
+
+/
