@@ -389,7 +389,7 @@ BEGIN
 
     SELECT CONTAPARTEB INTO V_CONTAPARTEB
     FROM AD_TCBLAL
-    AND CODCTACTB2 = 7929 AND CODIGO = '1.071'
+    WHERE CODCTACTB2 = 7929 AND CODIGO = '1.071';
 
 
     INSERT INTO AD_TCBSALLAN
@@ -495,7 +495,12 @@ BEGIN
             AND REFERENCIA = PARAM_REFERENCIA;
 
             IF V_COMPREJUFIS >0 THEN 
-                INSERT INTO AD_TCBSALLAN
+            
+            SELECT CONTAPARTEB, CODCTACTB INTO V_CONTAPARTEB, V_CODCTACTB2
+            FROM AD_TCBLAL
+            WHERE CODCTACTB2 = 7929 AND CODIGO = '1.071';
+            
+            INSERT INTO AD_TCBSALLAN
             (NUMLANC,
             CONTAPARTEB,
             REFERENCIA,
@@ -514,24 +519,17 @@ BEGIN
             V_CONTAPARTEB,
             PARAM_REFERENCIA,
             V_CODCTACTB2,
-            ABS(NVL(SUM(NVL(MOV.VLRDEP,0)),0) - NVL(SUM(NVL(MOVAJ.VLRDEP,0)),0)) AS DIFAC,
-            CASE WHEN (SUM(MOV.VLRDEP) - SUM(MOVAJ.VLRDEP)) > 0 THEN 'D' ELSE 'C' END AS TIPOIMPOSTO,
+            COMPPREJUFIS AS VLRCOMPREJUFIS,
+            'D' AS TIPOIMPOSTO,
             'S' AS REFLEXO,
             'C' AS TIPOIMPOSTO,
             V_HISTORICO,
             1,
             'B' AS ORIGEM,
             'N' AS MANUAL
-            FROM TCIBEM BEM
-                LEFT JOIN TCIMOV MOV ON MOV.CODBEM = BEM.CODBEM 
-                    AND MOV.CODPROD = BEM.CODPROD
-                LEFT JOIN TCIMOVAJ MOVAJ ON MOVAJ.CODBEM = BEM.CODBEM 
-                    AND MOVAJ.CODPROD = BEM.CODPROD
-                WHERE  BEM.CODEMP = V_CODEMP
-                    AND NVL(MOV.REFERENCIA,PARAM_REFERENCIA) <= PARAM_REFERENCIA
-                    AND (BEM.DTBAIXA IS NULL OR 
-                    BEM.DTBAIXA > PARAM_REFERENCIA)
-            AND BEM.CODBEM NOT LIKE '<TODOS>'
+            FROM TCBIRPJ
+            WHERE CODEMP = V_CODEMP
+            AND REFERENCIA = PARAM_REFERENCIA
             GROUP BY
                 V_NUMLANC,
                 FIELD_CONTAPARTEB,
@@ -555,29 +553,22 @@ BEGIN
             LINHALALUR,
             ORIGEM,
             MANUAL)
-             SELECT
+            SELECT
             V_NUMLANC + 1 AS NUMLANC,
-            FIELD_CONTAPARTEB,
+            V_CONTAPARTEB,
             PARAM_REFERENCIA,
             V_CODCTACTB2,
-            ABS(NVL(SUM(NVL(MOV.VLRDEP,0)),0) - NVL(SUM(NVL(MOVAJ.VLRDEP,0)),0)) AS DIFAC,
-            CASE WHEN (SUM(MOV.VLRDEP) - SUM(MOVAJ.VLRDEP)) > 0 THEN 'D' ELSE 'C' END AS TIPOIMPOSTO,
+            COMPPREJUFIS AS VLRCOMPREJUFIS,
+            'D' AS TIPOIMPOSTO,
             'S' AS REFLEXO,
-            'I' AS TIPOIMPOSTO,
+            'C' AS TIPOIMPOSTO,
             V_HISTORICO,
             1,
             'B' AS ORIGEM,
             'N' AS MANUAL
-            FROM TCIBEM BEM
-                LEFT JOIN TCIMOV MOV ON MOV.CODBEM = BEM.CODBEM 
-                    AND MOV.CODPROD = BEM.CODPROD
-                LEFT JOIN TCIMOVAJ MOVAJ ON MOVAJ.CODBEM = BEM.CODBEM 
-                    AND MOVAJ.CODPROD = BEM.CODPROD
-                WHERE  BEM.CODEMP = V_CODEMP
-                    AND NVL(MOV.REFERENCIA,PARAM_REFERENCIA) <= PARAM_REFERENCIA
-                    AND (BEM.DTBAIXA IS NULL OR 
-                    BEM.DTBAIXA > PARAM_REFERENCIA)
-            AND BEM.CODBEM NOT LIKE '<TODOS>'
+            FROM TCBIRPJ
+            WHERE CODEMP = V_CODEMP
+            AND REFERENCIA = PARAM_REFERENCIA
             GROUP BY
                 V_NUMLANC,
                 FIELD_CONTAPARTEB,
