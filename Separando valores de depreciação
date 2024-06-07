@@ -15,6 +15,7 @@ CREATE OR REPLACE PROCEDURE "AD_STP_UPD_TCBLALB" (
 AS
        PARAM_REFERENCIA DATE;
        FIELD_CONTAPARTEB VARCHAR2(4000);
+       V_CONTAPARTEB VARCHAR2(4000);
        V_NUMLANC NUMBER;
        V_CODCTACTB NUMBER;
        V_CODEMP NUMBER;
@@ -52,6 +53,10 @@ AS
        V_VALORTOT NUMBER;
        V_CHECK1 NUMBER;
        V_CHECK2 NUMBER;
+
+       V_COMPREJUFIS NUMBER;
+       V_CODEMPIRPJ NUMBER;
+       V_REFERENCIAIRPJ DATE;
 
 
 BEGIN
@@ -372,9 +377,20 @@ BEGIN
         END IF;
         END IF; 
 
---------- PROCESSO DE DEPRECIAÇÃO -------------
+--------------------- DEPRECIAÇÃO
 
-    IF V_CODCTACTB2 = 7929 THEN 
+
+    SELECT CODCTACTB2, CODIGO INTO V_CODCTACTB2, V_CODIGO 
+    FROM AD_TCBLAL
+    WHERE CONTAPARTEB = FIELD_CONTAPARTEB;
+
+    
+    IF V_CODCTACTB2 = 7929 AND V_CODIGO = '1.071'  THEN 
+
+    SELECT CONTAPARTEB INTO V_CONTAPARTEB
+    FROM AD_TCBLAL
+    AND CODCTACTB2 = 7929 AND CODIGO = '1.071'
+
 
     INSERT INTO AD_TCBSALLAN
             (NUMLANC,
@@ -391,8 +407,8 @@ BEGIN
             MANUAL)
 
         SELECT
-            V_NUMLANC + RN AS NUMLANC,
-            FIELD_CONTAPARTEB,
+            V_NUMLANC + ROW_NUMBER() OVER (ORDER BY V_NUMLANC) AS NUMLANC,
+            V_CONTAPARTEB,
             PARAM_REFERENCIA,
             V_CODCTACTB2,
             ABS(NVL(SUM(NVL(MOV.VLRDEP,0)),0) - NVL(SUM(NVL(MOVAJ.VLRDEP,0)),0)) AS DIFAC,
@@ -417,10 +433,13 @@ BEGIN
                 V_NUMLANC,
                 FIELD_CONTAPARTEB,
                 PARAM_REFERENCIA,
-                SAL.V_CODCTACTB2,
-                P.LALUR_A;
+                V_CODCTACTB2;
 
-                INSERT INTO AD_TCBSALLAN
+            SELECT MAX(NUMLANC) INTO V_NUMLANC FROM AD_TCBSALLAN
+            WHERE REFERENCIA = PARAM_REFERENCIA AND CONTAPARTEB = V_CONTAPARTEB;
+
+
+            INSERT INTO AD_TCBSALLAN
             (NUMLANC,
             CONTAPARTEB,
             REFERENCIA,
@@ -433,9 +452,8 @@ BEGIN
             LINHALALUR,
             ORIGEM,
             MANUAL)
-
-        SELECT
-            V_NUMLANC + RN AS NUMLANC,
+             SELECT
+            V_NUMLANC + 1 AS NUMLANC,
             FIELD_CONTAPARTEB,
             PARAM_REFERENCIA,
             V_CODCTACTB2,
@@ -461,24 +479,115 @@ BEGIN
                 V_NUMLANC,
                 FIELD_CONTAPARTEB,
                 PARAM_REFERENCIA,
-                SAL.V_CODCTACTB2,
-                P.LALUR_A;
+                V_CODCTACTB2;
+        END IF;
+
+
+--------------------------------------------- PREJUIZO FISCAL
+            SELECT  CODEMP
+                ,REFERENCIA
+                ,COMPPREJUFIS
+            INTO V_CODEMPIRPJ
+                ,V_REFERENCIAIRPJ
+                ,V_COMPREJUFIS
+            FROM TCBIRPJ
+            WHERE CODEMP = V_CODEMP
+            AND REFERENCIA = PARAM_REFERENCIA;
+
+            IF V_COMPREJUFIS >0 THEN 
+                INSERT INTO AD_TCBSALLAN
+            (NUMLANC,
+            CONTAPARTEB,
+            REFERENCIA,
+            CODCTACTB,
+            VALOR, 
+            DC,
+            REFLEXO,
+            TIPOIMPOSTO,
+            HISTORICO,
+            LINHALALUR,
+            ORIGEM,
+            MANUAL)
+
+        SELECT
+            V_NUMLANC + ROW_NUMBER() OVER (ORDER BY V_NUMLANC) AS NUMLANC,
+            V_CONTAPARTEB,
+            PARAM_REFERENCIA,
+            V_CODCTACTB2,
+            ABS(NVL(SUM(NVL(MOV.VLRDEP,0)),0) - NVL(SUM(NVL(MOVAJ.VLRDEP,0)),0)) AS DIFAC,
+            CASE WHEN (SUM(MOV.VLRDEP) - SUM(MOVAJ.VLRDEP)) > 0 THEN 'D' ELSE 'C' END AS TIPOIMPOSTO,
+            'S' AS REFLEXO,
+            'C' AS TIPOIMPOSTO,
+            V_HISTORICO,
+            1,
+            'B' AS ORIGEM,
+            'N' AS MANUAL
+            FROM TCIBEM BEM
+                LEFT JOIN TCIMOV MOV ON MOV.CODBEM = BEM.CODBEM 
+                    AND MOV.CODPROD = BEM.CODPROD
+                LEFT JOIN TCIMOVAJ MOVAJ ON MOVAJ.CODBEM = BEM.CODBEM 
+                    AND MOVAJ.CODPROD = BEM.CODPROD
+                WHERE  BEM.CODEMP = V_CODEMP
+                    AND NVL(MOV.REFERENCIA,PARAM_REFERENCIA) <= PARAM_REFERENCIA
+                    AND (BEM.DTBAIXA IS NULL OR 
+                    BEM.DTBAIXA > PARAM_REFERENCIA)
+            AND BEM.CODBEM NOT LIKE '<TODOS>'
+            GROUP BY
+                V_NUMLANC,
+                FIELD_CONTAPARTEB,
+                PARAM_REFERENCIA,
+                V_CODCTACTB2;
+
+            SELECT MAX(NUMLANC) INTO V_NUMLANC FROM AD_TCBSALLAN
+            WHERE REFERENCIA = PARAM_REFERENCIA AND CONTAPARTEB = V_CONTAPARTEB;
+
+
+            INSERT INTO AD_TCBSALLAN
+            (NUMLANC,
+            CONTAPARTEB,
+            REFERENCIA,
+            CODCTACTB,
+            VALOR, 
+            DC,
+            REFLEXO,
+            TIPOIMPOSTO,
+            HISTORICO,
+            LINHALALUR,
+            ORIGEM,
+            MANUAL)
+             SELECT
+            V_NUMLANC + 1 AS NUMLANC,
+            FIELD_CONTAPARTEB,
+            PARAM_REFERENCIA,
+            V_CODCTACTB2,
+            ABS(NVL(SUM(NVL(MOV.VLRDEP,0)),0) - NVL(SUM(NVL(MOVAJ.VLRDEP,0)),0)) AS DIFAC,
+            CASE WHEN (SUM(MOV.VLRDEP) - SUM(MOVAJ.VLRDEP)) > 0 THEN 'D' ELSE 'C' END AS TIPOIMPOSTO,
+            'S' AS REFLEXO,
+            'I' AS TIPOIMPOSTO,
+            V_HISTORICO,
+            1,
+            'B' AS ORIGEM,
+            'N' AS MANUAL
+            FROM TCIBEM BEM
+                LEFT JOIN TCIMOV MOV ON MOV.CODBEM = BEM.CODBEM 
+                    AND MOV.CODPROD = BEM.CODPROD
+                LEFT JOIN TCIMOVAJ MOVAJ ON MOVAJ.CODBEM = BEM.CODBEM 
+                    AND MOVAJ.CODPROD = BEM.CODPROD
+                WHERE  BEM.CODEMP = V_CODEMP
+                    AND NVL(MOV.REFERENCIA,PARAM_REFERENCIA) <= PARAM_REFERENCIA
+                    AND (BEM.DTBAIXA IS NULL OR 
+                    BEM.DTBAIXA > PARAM_REFERENCIA)
+            AND BEM.CODBEM NOT LIKE '<TODOS>'
+            GROUP BY
+                V_NUMLANC,
+                FIELD_CONTAPARTEB,
+                PARAM_REFERENCIA,
+                V_CODCTACTB2;
+            END IF;
+
 
     END LOOP;
          P_MENSAGEM := 'Lançamentos Executados com Sucesso!';
 END;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /
+
