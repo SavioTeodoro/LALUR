@@ -1,0 +1,334 @@
+CREATE OR REPLACE PROCEDURE "AD_STP_TCBIRPJ_ATUALIZA" (
+              P_CODUSU NUMBER,        -- Código do usuário logado
+              P_IDSESSAO VARCHAR2,    -- Identificador da execução. Serve para buscar informações dos parâmetros/campos da execução.
+              P_QTDLINHAS NUMBER,     -- Informa a quantidade de registros selecionados no momento da execução.
+              P_MENSAGEM OUT VARCHAR2 -- Caso seja passada uma mensagem aqui, ela será exibida como uma informação ao usuário.
+       ) AS
+              PARAM_REFERENCIA DATE;
+              FIELD_CODEMP NUMBER;
+              FIELD_REFERENCIA DATE;
+              V_VALORIRAD NUMBER;
+              V_VALORIREX NUMBER;
+              V_VALORCSAD NUMBER;
+              V_VALORCSEX NUMBER;
+              V_LUCROANTESIR NUMBER;
+              V_LUCROANTESIR_CSLL NUMBER;
+              V_IRPJ15 NUMBER;
+              V_IRPJ10 NUMBER;
+              V_CSLL9 NUMBER;
+              V_BASEAJUSTADA NUMBER;
+              V_BASEAJUSTADA2 NUMBER;
+              V_DEDUCAOPAT NUMBER;
+              V_DEDUCAOPATPAT NUMBER;
+              V_DEDUCAOPATIRPJ NUMBER;
+              V_TOTALRECOLHIDO NUMBER;
+              V_TOTALRECOLHIDO_CSLL NUMBER;
+              V_RESLIQAJUS NUMBER; 
+              V_COMPPREJUFIS NUMBER;  
+
+              V_COUNTPREJ NUMBER;
+              V_COMPREJUFIS NUMBER;
+              V_CODEMPIRPJ NUMBER;
+              V_REFERENCIAIRPJ DATE;
+              V_CODCTACTB2 NUMBER;
+              V_CODIGO VARCHAR2(100);
+              V_CONTAPARTEB VARCHAR2(4000);
+              V_HISTORICO VARCHAR2(400);
+              V_NUMLANC NUMBER;
+
+
+       BEGIN
+
+              PARAM_REFERENCIA := ACT_DTA_PARAM(P_IDSESSAO, 'REFERENCIA');
+
+              FOR I IN 1..P_QTDLINHAS -- Este loop permite obter o valor de campos dos registros envolvidos na execução.
+              LOOP                    -- A variável "I" representa o registro corrente.
+
+              FIELD_CODEMP := ACT_INT_FIELD(P_IDSESSAO, I, 'CODEMP');
+              FIELD_REFERENCIA := ACT_DTA_FIELD(P_IDSESSAO, I, 'REFERENCIA');
+
+              SELECT SUM(VLRLANC) INTO V_VALORIRAD
+              FROM TCBIRPJAD
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA
+                     AND TIPOIMPOSTO = 'I';
+
+              SELECT SUM(VLRLANC) INTO V_VALORCSAD
+              FROM TCBIRPJAD
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA
+                     AND TIPOIMPOSTO = 'C';
+
+              SELECT SUM(VLRLANC) INTO V_VALORIREX
+              FROM TCBIRPJEX
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA
+                     AND TIPOIMPOSTO = 'I';
+----- PROCESSO DE COMPENSAÇÃO PREJUIZO 
+
+            SELECT NVL(RESLIQAJUS*0.2,0) INTO V_COMPPREJUFIS
+            FROM TCBIRPJ
+            WHERE CODEMP = FIELD_CODEMP
+                    AND REFERENCIA = ADD_MONTHS(FIELD_REFERENCIA, -1) ;
+
+            IF V_COMPPREJUFIS < 0 THEN 
+            UPDATE TCBIRPJ SET COMPPREJUFIS = V_COMPPREJUFIS WHERE CODEMP = FIELD_CODEMP AND REFERENCIA =  FIELD_REFERENCIA;
+            END IF;
+
+            IF V_COMPPREJUFIS > 0 THEN
+            V_COMPPREJUFIS := 0;
+            END IF;
+
+----- PROCESSO DE COMPENSAÇÃO PREJUIZO 
+
+              SELECT SUM(VLRLANC) INTO V_VALORCSEX
+              FROM TCBIRPJEX
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA
+                     AND TIPOIMPOSTO = 'C';
+
+              UPDATE TCBIRPJ 
+              SET TOTALADICOES = V_VALORIRAD,
+                     TOTALADICOES_CSLL = V_VALORCSAD,
+                     TOTALEXCLUSOES = V_VALORIREX,
+                     TOTALEXCLUSOES_CSLL = V_VALORCSEX
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+              SELECT LUCROANTESIR, LUCROANTESIR_CSLL INTO V_LUCROANTESIR, V_LUCROANTESIR_CSLL
+              FROM TCBIRPJ
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+            V_RESLIQAJUS := V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX;
+
+                UPDATE TCBIRPJ 
+                SET  RESLIQAJUS = V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX,
+                     RESLIQAJUS_CSLL = V_LUCROANTESIR_CSLL + V_VALORCSAD - V_VALORCSEX
+                WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+              V_BASEAJUSTADA := V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX;
+
+            IF V_COMPPREJUFIS < V_BASEAJUSTADA  THEN 
+            V_COMPPREJUFIS := V_BASEAJUSTADA;
+            UPDATE TCBIRPJ SET COMPPREJUFIS = -V_COMPPREJUFIS WHERE CODEMP = FIELD_CODEMP AND REFERENCIA =  FIELD_REFERENCIA;
+            END IF;
+
+            V_RESLIQAJUS := V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX - ABS(V_COMPPREJUFIS);
+
+            IF V_RESLIQAJUS > 0 THEN
+              UPDATE TCBIRPJ 
+              SET BASEAJUSTADA = V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX - ABS(V_COMPPREJUFIS),
+                     BASEAJUSTADA_CSLL = V_LUCROANTESIR_CSLL + V_VALORCSAD - V_VALORCSEX,
+                     RESLIQAJUS = V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX,
+                     RESLIQAJUS_CSLL = V_LUCROANTESIR_CSLL + V_VALORCSAD - V_VALORCSEX
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+              V_BASEAJUSTADA := V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX - ABS(V_COMPPREJUFIS); 
+
+              V_IRPJ15 := ROUND((V_LUCROANTESIR + V_VALORIRAD - V_VALORIREX)*0.15,2);
+              V_CSLL9 := ROUND((V_LUCROANTESIR_CSLL + V_VALORCSAD - V_VALORCSEX)*0.09,2);
+
+              UPDATE TCBIRPJ 
+              SET IRPJ15 = V_IRPJ15,
+                     CSLL9 = V_CSLL9
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+              IF V_BASEAJUSTADA > 20000 THEN 
+              V_IRPJ10 :=  ROUND ((V_BASEAJUSTADA - 20000) * 0.10,2);
+
+              UPDATE TCBIRPJ 
+              SET IRPJ10 = V_IRPJ10
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+              ELSE 
+
+              UPDATE TCBIRPJ 
+              SET IRPJ10 = 0
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+              END IF;
+
+              UPDATE TCBIRPJ 
+              SET IMPOSTODEVIDO = NVL(V_IRPJ10,0) +  NVL(V_IRPJ15,0)
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+            ---- CALCULO DE DEDUÇÃO PAT
+
+            ---SETANDO VARIÁVEIS
+            SELECT NVL(VALORPAT,0)*0.15,  NVL(IRPJ15,0)*0.04 INTO V_DEDUCAOPATPAT , V_DEDUCAOPATIRPJ
+              FROM TCBIRPJ 
+            WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+            ---- VERIFICANDO QUAL É O MENOR PARA A VARIÁVEL
+
+            IF V_DEDUCAOPATPAT < V_DEDUCAOPATIRPJ THEN
+                V_DEDUCAOPAT := V_DEDUCAOPATPAT;
+            ELSIF V_DEDUCAOPATIRPJ < V_DEDUCAOPATPAT THEN
+                V_DEDUCAOPAT := V_DEDUCAOPATIRPJ;
+            END IF;
+
+              SELECT TOTALRECOLHIDO, TOTALRECOLHIDO_CSLL INTO  V_TOTALRECOLHIDO, V_TOTALRECOLHIDO_CSLL
+              FROM TCBIRPJ 
+              WHERE CODEMP = FIELD_CODEMP
+                     AND REFERENCIA = FIELD_REFERENCIA;
+
+              UPDATE TCBIRPJ 
+              SET IMPOSTODEVIDOLIQ =  (NVL(V_IRPJ10,0) +  NVL(V_IRPJ15,0)) - V_DEDUCAOPAT , 
+              SALDOARECOLHER = (NVL(V_IRPJ10,0) +  NVL(V_IRPJ15,0)) - V_DEDUCAOPAT - V_TOTALRECOLHIDO,
+              SALDOARECOLHER_CSLL = V_CSLL9 - V_TOTALRECOLHIDO_CSLL,
+              IMPOSTOARECOLHERFINAL = (NVL(V_IRPJ10,0) +  NVL(V_IRPJ15,0)) - V_DEDUCAOPAT - V_TOTALRECOLHIDO,
+              IMPOSTOARECOLHERFINAL_CSLL = V_CSLL9 - V_TOTALRECOLHIDO_CSLL,
+              DEDUCAOPAT =V_DEDUCAOPAT
+              WHERE CODEMP = FIELD_CODEMP
+                    AND REFERENCIA = FIELD_REFERENCIA;
+            END IF; 
+
+            IF V_RESLIQAJUS <= 0 THEN
+            UPDATE TCBIRPJ SET 
+            BASEAJUSTADA = 0,
+            BASEAJUSTADA_CSLL = 0,  
+            IRPJ15 = 0, 
+            IRPJ10 = 0, 
+            IMPOSTODEVIDOLIQ = 0, 
+            SALDOARECOLHER = 0,
+            IMPOSTOARECOLHERFINAL = 0, 
+            CSLL9 = 0, 
+            SALDOARECOLHER_CSLL = 0,
+            IMPOSTOARECOLHERFINAL_CSLL = 0, 
+            IMPOSTODEVIDO = 0,
+            DEDUCAOPAT = 0
+            WHERE CODEMP = FIELD_CODEMP
+                AND REFERENCIA = FIELD_REFERENCIA;
+            END IF; 
+
+--------------------------------------------- PREJUIZO FISCAL
+
+            SELECT COUNT(CODEMP) INTO V_COUNTPREJ
+            FROM TCBIRPJ
+            WHERE CODEMP = FIELD_CODEMP
+            AND REFERENCIA = FIELD_REFERENCIA;
+
+            IF V_COUNTPREJ > 0 THEN 
+            SELECT  CODEMP
+                ,REFERENCIA
+                ,RESLIQAJUS
+            INTO V_CODEMPIRPJ
+                ,V_REFERENCIAIRPJ
+                ,V_COMPREJUFIS
+            FROM TCBIRPJ
+            WHERE CODEMP = FIELD_CODEMP
+            AND REFERENCIA = FIELD_REFERENCIA;
+
+            SELECT CODCTACTB2, CODIGO INTO V_CODCTACTB2, V_CODIGO 
+            FROM AD_TCBLAL
+            WHERE CODIGO = '1.000'
+            AND CODEMP = FIELD_CODEMP;
+
+            IF V_CODIGO = '1.000'  THEN 
+
+            SELECT CONTAPARTEB INTO V_CONTAPARTEB
+            FROM AD_TCBLAL
+            WHERE CODIGO = '1.000'
+            AND CODEMP = FIELD_CODEMP;
+            END IF;       
+
+            IF V_COMPREJUFIS < 0  AND V_CODIGO = '1.000' THEN 
+
+            SELECT CONTAPARTEB, NVL(CODCTACTB,0) INTO V_CONTAPARTEB, V_CODCTACTB2
+            FROM AD_TCBLAL
+            WHERE CODIGO = '1.000'
+            AND CODEMP = FIELD_CODEMP;
+
+            SELECT DESCRICAO || ' - ' || TO_CHAR(TO_DATE(PARAM_REFERENCIA, 'DD/MM/YYYY'), 'Month')
+            INTO V_HISTORICO
+            FROM AD_TCBLAL
+            WHERE CONTAPARTEB = V_CONTAPARTEB;
+       
+            SELECT NVL(MAX(NUMLANC),0) INTO V_NUMLANC
+            FROM AD_TCBSALLAN 
+            WHERE CONTAPARTEB = V_CONTAPARTEB;
+
+            INSERT INTO AD_TCBSALLAN
+            (NUMLANC,
+            CONTAPARTEB,
+            REFERENCIA,
+            CODCTACTB,
+            VALOR, 
+            DC,
+            REFLEXO,
+            TIPOIMPOSTO,
+            HISTORICO,
+            LINHALALUR,
+            ORIGEM,
+            MANUAL)
+
+        SELECT
+            V_NUMLANC + ROW_NUMBER() OVER (ORDER BY V_NUMLANC) AS NUMLANC,
+            V_CONTAPARTEB,
+            FIELD_REFERENCIA,
+            V_CODCTACTB2,
+            ABS(V_COMPREJUFIS) AS VLRCOMPREJUFIS,
+            'D' AS TIPOIMPOSTO,
+            'S' AS REFLEXO,
+            'C' AS TIPOLANC,
+            V_HISTORICO,
+            1,
+            'B' AS ORIGEM,
+            'N' AS MANUAL
+            FROM TCBIRPJ
+            WHERE CODEMP = FIELD_CODEMP
+            AND REFERENCIA = FIELD_REFERENCIA;
+
+            SELECT MAX(NUMLANC) INTO V_NUMLANC FROM AD_TCBSALLAN
+            WHERE REFERENCIA = FIELD_REFERENCIA AND CONTAPARTEB = V_CONTAPARTEB;
+
+
+            INSERT INTO AD_TCBSALLAN
+            (NUMLANC,
+            CONTAPARTEB,
+            REFERENCIA,
+            CODCTACTB,
+            VALOR, 
+            DC,
+            REFLEXO,
+            TIPOIMPOSTO,
+            HISTORICO,
+            LINHALALUR,
+            ORIGEM,
+            MANUAL)
+
+            SELECT
+            V_NUMLANC + 1 AS NUMLANC,
+            V_CONTAPARTEB,
+            FIELD_REFERENCIA,
+            V_CODCTACTB2,
+            ABS(V_COMPREJUFIS) AS VLRCOMPREJUFIS,
+            'D' AS TIPOIMPOSTO,
+            'S' AS REFLEXO,
+            'C' AS TIPOLANC,
+            V_HISTORICO,
+            1,
+            'B' AS ORIGEM,
+            'N' AS MANUAL
+            FROM TCBIRPJ
+            WHERE CODEMP = FIELD_CODEMP
+            AND REFERENCIA = FIELD_REFERENCIA;
+            END IF;
+            END IF;
+
+
+
+            END LOOP;
+       P_MENSAGEM := 'Saldos Atualizados com Sucesso!';
+       END;
+
+
+
+
+/
